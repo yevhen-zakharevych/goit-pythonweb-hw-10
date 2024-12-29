@@ -1,22 +1,46 @@
+import os
+
 from datetime import date, timedelta
 from typing import List, Optional
 
-from fastapi import FastAPI, Query, HTTPException, Depends, status, BackgroundTasks, Request
+from fastapi import FastAPI, Query, HTTPException, Depends, status, BackgroundTasks, Request, UploadFile, File
 from fastapi.security import OAuth2PasswordRequestForm
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 from starlette.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 
 from src.services.auth import create_access_token, get_current_user, Hash, get_email_from_token
 from db import Base, engine, get_db, Contact, User
 from schemas import ContactCreate, ContactUpdate, ContactResponse, UserModel
 from src.services.email import send_email
+from src.services.upload_file import UploadFileService
+from dotenv import load_dotenv
+
+load_dotenv()
+
+CLD_NAME = os.environ.get("CLOUDINARY_NAME")
+CLD_API_KEY = os.environ.get("CLOUDINARY_API_KEY")
+CLD_API_SECRET = os.environ.get("CLOUDINARY_API_SECRET")
 
 app = FastAPI()
 hash_handler = Hash()
 limiter = Limiter(key_func=get_remote_address)
+
+origins = [
+    "http://localhost",
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 Base.metadata.create_all(bind=engine)
 
@@ -187,6 +211,24 @@ async def confirmed_email(token: str, db: Session = Depends(get_db)):
     db.commit()
 
     return {"message": "Your email is confirmed"}
+
+
+@app.patch("/avatar")
+async def update_avatar_user(
+    file: UploadFile = File(),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    avatar_url = UploadFileService(
+        CLD_NAME, CLD_API_KEY, CLD_API_SECRET
+    ).upload_file(file, current_user.username)
+
+    edited_user = db.query(User).filter(User.username == current_user.username).first()
+    edited_user.avatar_url = avatar_url
+
+    db.commit()
+
+    return {"message": "Avatar updated successfully", "avatar_url": avatar_url}
 
 
 @app.exception_handler(RateLimitExceeded)
