@@ -1,5 +1,5 @@
 import os
-from sqlalchemy import create_engine, Column, Integer, String, Date, ForeignKey
+from sqlalchemy import create_engine, Column, Integer, String, Date, ForeignKey, Boolean
 from sqlalchemy.orm import sessionmaker, DeclarativeBase, relationship
 from dotenv import load_dotenv
 
@@ -20,6 +20,7 @@ class User(Base):
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String, unique=True, index=True, nullable=False)
     password = Column(String, nullable=False)
+    confirmed = Column(Boolean, default=False)
 
     contacts = relationship("Contact", back_populates="user")
 
@@ -39,7 +40,6 @@ class Contact(Base):
     user = relationship("User", back_populates="contacts")
 
 
-# Base.metadata.drop_all(bind=engine)
 Base.metadata.create_all(bind=engine)
 
 

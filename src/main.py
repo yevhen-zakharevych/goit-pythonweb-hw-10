@@ -1,13 +1,14 @@
 from datetime import date, timedelta
 from typing import List, Optional
 
-from fastapi import FastAPI, Query, HTTPException, Depends, status
+from fastapi import FastAPI, Query, HTTPException, Depends, status, BackgroundTasks, Request
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 
-from auth import create_access_token, get_current_user, Hash
+from src.services.auth import create_access_token, get_current_user, Hash, get_email_from_token
 from db import Base, engine, get_db, Contact, User
 from schemas import ContactCreate, ContactUpdate, ContactResponse, UserModel
+from src.services.email import send_email
 
 app = FastAPI()
 hash_handler = Hash()
@@ -16,7 +17,11 @@ Base.metadata.create_all(bind=engine)
 
 
 @app.post("/signup")
-async def signup(body: UserModel, db: Session = Depends(get_db)):
+async def signup(
+        body: UserModel,
+        background_tasks: BackgroundTasks,
+        request: Request,
+        db: Session = Depends(get_db)):
     exist_user = db.query(User).filter(User.username == body.username).first()
     if exist_user:
         raise HTTPException(
@@ -28,7 +33,14 @@ async def signup(body: UserModel, db: Session = Depends(get_db)):
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
+
+    background_tasks.add_task(
+        send_email, new_user.username, new_user.username, request.base_url
+    )
+
     return {"new_user": new_user.username}
+
+
 
 
 @app.post("/login")
@@ -43,6 +55,12 @@ async def login(
     if not hash_handler.verify_password(body.password, user.password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid password"
+        )
+
+    if not user.confirmed:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Emai is not confirmed. Please, check your email",
         )
     # Generate JWT
     access_token = await create_access_token(data={"sub": user.username})
@@ -147,6 +165,22 @@ def upcoming_birthdays(
     )
 
     return contacts
+
+@app.get("/confirmed_email/{token}")
+async def confirmed_email(token: str, db: Session = Depends(get_db)):
+    email = await get_email_from_token(token)
+
+    user = db.query(User).filter(User.username == email).first()
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Verification error"
+        )
+    if user.confirmed:
+        return {"message": "Your email is already confirmed"}
+    setattr(user, "confirmed", True)
+    db.commit()
+
+    return {"message": "Your email is confirmed"}
 
 
 if __name__ == "__main__":
