@@ -4,6 +4,10 @@ from typing import List, Optional
 from fastapi import FastAPI, Query, HTTPException, Depends, status, BackgroundTasks, Request
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
+from slowapi import Limiter
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
+from starlette.responses import JSONResponse
 
 from src.services.auth import create_access_token, get_current_user, Hash, get_email_from_token
 from db import Base, engine, get_db, Contact, User
@@ -12,6 +16,7 @@ from src.services.email import send_email
 
 app = FastAPI()
 hash_handler = Hash()
+limiter = Limiter(key_func=get_remote_address)
 
 Base.metadata.create_all(bind=engine)
 
@@ -166,6 +171,7 @@ def upcoming_birthdays(
 
     return contacts
 
+
 @app.get("/confirmed_email/{token}")
 async def confirmed_email(token: str, db: Session = Depends(get_db)):
     email = await get_email_from_token(token)
@@ -182,6 +188,19 @@ async def confirmed_email(token: str, db: Session = Depends(get_db)):
 
     return {"message": "Your email is confirmed"}
 
+
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
+    return JSONResponse(
+        status_code=429,
+        content={"error": "Rate limit exceeded. Please try again later."},
+    )
+
+
+@app.get("/me")
+@limiter.limit("5/minute")
+async def my_endpoint(request: Request):
+    return {"message": "The route with limitations."}
 
 if __name__ == "__main__":
     import uvicorn
